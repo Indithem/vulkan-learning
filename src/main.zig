@@ -2,10 +2,14 @@ const std = @import("std");
 const vk = @cImport({
     @cInclude("vulkan/vulkan.h");
 });
+const c_std = @cImport({
+    @cInclude("string.h");
+});
 const glfw = @cImport({
     @cDefine("GLFW_INCLUDE_VULKAN", {});
     @cInclude("GLFW/glfw3.h");
 });
+
 
 const dbg_print = std.debug.print;
 var allocator_init = std.heap.DebugAllocator(.{}).init;
@@ -72,13 +76,13 @@ pub fn main() !void {
     };
     defer allocator.free(available_vk_layers);
 
-    const validation_layers = [_][:0]const u8{
+    const validation_layers = [_][*:0]const u8{
         "VK_LAYER_KHRONOS_validation",
         "VK_LAYER_MESA_device_select",
     };
     for (validation_layers) |layer| {
         if (!for (available_vk_layers) |avail| {
-            if (std.mem.eql(u8, avail.layerName[0..layer.len], layer))
+            if (c_std.strcmp(layer, &avail.layerName) == 0)
                 break true;
         } else false) {
             dbg_print("Validation Layer = {s} is not available!\n", .{layer});
@@ -101,13 +105,7 @@ pub fn main() !void {
             .enabledExtensionCount = @intCast(glfw_extensions.len),
             .ppEnabledExtensionNames = glfw_extensions.ptr,
             .enabledLayerCount = validation_layers.len,
-            .ppEnabledLayerNames = blk: {
-                var ret:[validation_layers.len][*]const u8 = undefined;
-                for (validation_layers, 0..) |lay, i| {
-                    ret[i] = lay.ptr;
-                }
-                break :blk (&ret);
-            },
+            .ppEnabledLayerNames = &validation_layers,
             // .pNext = null,
         },
         // Allocator, and VkInstance
