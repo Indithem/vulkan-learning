@@ -12,8 +12,12 @@ const glfw = @cImport({
 
 
 const dbg_print = std.debug.print;
-var allocator_init = std.heap.DebugAllocator(.{}).init;
+var allocator_init = std.heap.DebugAllocator(.{
+    // .verbose_log = true,
+}).init;
 const allocator = allocator_init.allocator();
+
+var free_u32: u32 = undefined;
 
 pub fn main() !void {
     defer {
@@ -115,9 +119,19 @@ pub fn main() !void {
 
     std.debug.print("Initialized vulkan, instance={?}\n", .{vk_instance});
 
+    try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, null));
+    const physical_device_info = try allocator.alloc(vk.VkPhysicalDevice, free_u32);
+    defer allocator.free(physical_device_info);
+    try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, physical_device_info.ptr));
+    dbg_print("Found {d} devices:\n", .{physical_device_info.len});
+    for (physical_device_info, 0..) |dev, i| {
+        var props: vk.VkPhysicalDeviceProperties = undefined;
+        vk.vkGetPhysicalDeviceProperties(dev, &props);
+        dbg_print("    {d}. Name = {s}\n", .{i+1, props.deviceName});
+    }
 
     while (glfw.glfwWindowShouldClose(window) == 0) : ({
-        glfw.glfwPollEvdestroyents();
+        glfw.glfwPollEvents();
     }) {
         break;  //FIXME: change
     }

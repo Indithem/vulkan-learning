@@ -1,5 +1,8 @@
 .zig-cache/
 .zed/
 zig-out/
+.cache/
 
 a.out
+cpp.out
+zig.out
