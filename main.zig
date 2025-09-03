@@ -18,6 +18,7 @@ var allocator_init = std.heap.DebugAllocator(.{
 const allocator = allocator_init.allocator();
 
 var free_u32: u32 = undefined;
+var free_usize: usize = undefined;
 
 pub fn main() !void {
     defer {
@@ -47,20 +48,23 @@ pub fn main() !void {
 
     // PRETTYFYME:
     // struct type outside the val: block is preffered?
-    const glfw_extensions: [][*c]const u8 = val:{
+    const needed_extensions: [][*:0]const u8 = val:{
         var count: u32 = undefined;
         const c_ext = glfw.glfwGetRequiredInstanceExtensions(&count);
 
-        // dbg_print("GLFW extensions needed (count) = {d}\n", .{count});
-        // for (c_ext, 0..count) |cstr, i| {
-        //     dbg_print("    {d}.{s}\n", .{i+1, cstr});
+        var slice = try allocator.alloc([*:0]const u8, count+1);
+        for (0..count) |i|
+            slice[i] = c_ext[i];
+            slice[count] = "VK_EXT_debug_utils";
+
+        // dbg_print("Needed extensions (count) = {d}\n", .{slice.len});
+        // for (slice, 0..) |str, i| {
+        //     dbg_print("    {d}.{s}\n", .{i+1, str});
         // }
 
-        var extensions:[][*c]const u8 = undefined;
-        extensions.len = count;
-        extensions.ptr = c_ext;
-        break :val extensions;
+        break :val slice;
     };
+    defer allocator.free(needed_extensions);
 
     var vk_instance: vk.VkInstance = undefined;
 
@@ -106,11 +110,37 @@ pub fn main() !void {
                 .pEngineName = "never used",
                 // .pNext = null,
             },
-            .enabledExtensionCount = @intCast(glfw_extensions.len),
-            .ppEnabledExtensionNames = glfw_extensions.ptr,
+            .enabledExtensionCount = @intCast(needed_extensions.len),
+            .ppEnabledExtensionNames = needed_extensions.ptr,
             .enabledLayerCount = validation_layers.len,
             .ppEnabledLayerNames = &validation_layers,
-            // .pNext = null,
+            .pNext =
+        &vk.VkDebugUtilsMessengerCreateInfoEXT{
+            .sType = vk.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+            .messageSeverity =
+                // vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                vk.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            .messageType =
+                vk.VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                vk.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                vk.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+            .pfnUserCallback = &struct {
+                fn callback(
+                    severity: vk.VkDebugUtilsMessageSeverityFlagsEXT,
+                    msg_type: vk.VkDebugUtilsMessageTypeFlagBitsEXT,
+                    data: ?*const vk.VkDebugUtilsMessengerCallbackDataEXT,
+                    user_data: ?*anyopaque
+                ) callconv(.c) u32 {
+                    _ = user_data;
+                    _ = severity;
+                    _ = msg_type;
+                    // TODO: print these messages in different color.
+                    dbg_print("validation layer: {s}\n", .{data.?.pMessage});
+                    return 0;
+                }
+            }.callback,
+        },
         },
         // Allocator, and VkInstance
         null, &vk_instance),
@@ -120,15 +150,35 @@ pub fn main() !void {
     std.debug.print("Initialized vulkan, instance={?}\n", .{vk_instance});
 
     try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, null));
-    const physical_device_info = try allocator.alloc(vk.VkPhysicalDevice, free_u32);
-    defer allocator.free(physical_device_info);
-    try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, physical_device_info.ptr));
-    dbg_print("Found {d} devices:\n", .{physical_device_info.len});
-    for (physical_device_info, 0..) |dev, i| {
+    const physical_devices = try allocator.alloc(vk.VkPhysicalDevice, free_u32);
+    defer allocator.free(physical_devices);
+    try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, physical_devices.ptr));
+
+    dbg_print("Found {d} devices:\n", .{physical_devices.len});
+
+    free_usize = physical_devices.len;
+    for (physical_devices, 0..) |dev, i| {
         var props: vk.VkPhysicalDeviceProperties = undefined;
+        var feats: vk.VkPhysicalDeviceFeatures = undefined;
         vk.vkGetPhysicalDeviceProperties(dev, &props);
-        dbg_print("    {d}. Name = {s}\n", .{i+1, props.deviceName});
+        vk.vkGetPhysicalDeviceFeatures(dev, &feats);
+        if (props.deviceType==vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) free_usize=i;
+
+        dbg_print("    {d}. Name = {s} (Integrated={})\n", .{i+1,
+            props.deviceName,
+            props.deviceType==vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
+        });
+        // dbg_print("{}\n", .{feats});
     }
+    const req_device = physical_devices[free_usize];
+
+    vk.vkGetPhysicalDeviceQueueFamilyProperties(req_device, &free_u32, null);
+    const slice = try allocator.alloc(vk.VkQueueFamilyProperties, free_u32);
+    defer allocator.free(slice);
+    vk.vkGetPhysicalDeviceQueueFamilyProperties(req_device, &free_u32, slice.ptr);
+    free_usize = slice.len;
+    for (slice, 0..) |s, i| if (s.queueFlags&vk.VK_QUEUE_GRAPHICS_BIT==vk.VK_QUEUE_GRAPHICS_BIT) {free_usize=i;};
+
 
     while (glfw.glfwWindowShouldClose(window) == 0) : ({
         glfw.glfwPollEvents();

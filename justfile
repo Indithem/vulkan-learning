@@ -1,11 +1,11 @@
 export ZIG_LOCAL_CACHE_DIR := "./.cache/"
 
 zig:
-    zig run -lc -lglfw -lvulkan main.zig
+    zig run -lc -lglfw -lvulkan main.zig 2>&1
 
 cpp:
-    zig c++ vulkan-tutorial.cpp -lglfw -lvulkan -Oz -o cpp.out
-    ./cpp.out
+    zig c++ vulkan-tutorial.cpp -lglfw -lvulkan -o cpp.out
+    ./cpp.out 2>&1
 
 build:
     zig build-exe -lc -lglfw -lvulkan main.zig -OReleaseSmall
