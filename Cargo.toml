@@ -1,0 +1,15 @@
+cargo-features = ["codegen-backend"]
+
+[package]
+name = "vulkan"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.99"
+ash = "0.38.0"
+bytemuck = "1.23.2"
+winit = "0.30.12"
+
+[profile.dev]
+codegen-backend = "cranelift"

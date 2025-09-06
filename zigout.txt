@@ -1,0 +1,6 @@
+Initialized GLFW, window=cimport.struct_GLFWwindow@19764520.
+Initialized vulkan, instance=cimport.struct_VkInstance_T@19e48160
+Found 2 devices:
+    1. Name = Intel(R) Graphics (ADL GT2) (Integrated=true)
+    2. Name = NVIDIA GeForce RTX 3050 Laptop GPU (Integrated=false)
+Done.
