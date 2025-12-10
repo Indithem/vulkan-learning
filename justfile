@@ -15,4 +15,5 @@ build:
 
 clean zig_cache_dir="":
     rm -f cpp.out zig.out
+    # why was i cleaning this menacingly?
     [ -z {{zig_cache_dir}} ] || rm -rf {{ZIG_LOCAL_CACHE_DIR}}

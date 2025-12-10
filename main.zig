@@ -1,14 +1,13 @@
 const std = @import("std");
-const vk = @cImport({
-    @cInclude("vulkan/vulkan.h");
-});
 const c_std = @cImport({
     @cInclude("string.h");
 });
 const glfw = @cImport({
+    @cInclude("vulkan/vulkan.h");
     @cDefine("GLFW_INCLUDE_VULKAN", {});
     @cInclude("GLFW/glfw3.h");
 });
+const vk = glfw;
 
 
 const dbg_print = std.debug.print;
@@ -19,6 +18,9 @@ const allocator = allocator_init.allocator();
 
 var free_u32: u32 = undefined;
 var free_usize: usize = undefined;
+
+const WIDTH = 800;
+const HEIGHT = 600;
 
 pub fn main() !void {
     defer {
@@ -32,7 +34,7 @@ pub fn main() !void {
     glfw.glfwWindowHint(glfw.GLFW_CLIENT_API, glfw.GLFW_NO_API);
     glfw.glfwWindowHint(glfw.GLFW_RESIZABLE, glfw.GLFW_FALSE);
 
-    const window: *glfw.GLFWwindow = glfw.glfwCreateWindow(800, 600, "Test Window", null, null)
+    const window: *glfw.GLFWwindow = glfw.glfwCreateWindow(WIDTH, HEIGHT, "Test Window", null, null)
         orelse return GLFWErrors.InitializingError;
     defer glfw.glfwDestroyWindow(window);
 
@@ -52,12 +54,15 @@ pub fn main() !void {
         var count: u32 = undefined;
         const c_ext = glfw.glfwGetRequiredInstanceExtensions(&count);
 
-        var slice = try allocator.alloc([*:0]const u8, count+1);
-        for (0..count) |i|
-            slice[i] = c_ext[i];
-            slice[count] = "VK_EXT_debug_utils";
+        const needed_extensions = [_][*:0]const u8 {
+            "VK_EXT_debug_utils",
+        };
 
-        // dbg_print("Needed extensions (count) = {d}\n", .{slice.len});
+        var slice = try allocator.alloc([*:0]const u8, count+needed_extensions.len);
+        for (0..count) |i| slice[i] = c_ext[i];
+        for (needed_extensions, 0..) |a, i| slice[count+i] = a;
+
+        // dbg_print("Needed extensions (count= {d})\n", .{slice.len});
         // for (slice, 0..) |str, i| {
         //     dbg_print("    {d}.{s}\n", .{i+1, str});
         // }
@@ -76,7 +81,7 @@ pub fn main() !void {
 
         // dbg_print("All {} available validation layers:\n", .{count});
         // for (slice, 0..) |prop, i| {
-        //     dbg_print("{d}-layerName= {s} specVersion={d} implementationVer={d} description={s}\n",
+        //     dbg_print("{d}-layerName={s} specVersion={d} implementationVer={d} description={s}\n",
         //         .{i+1, prop.layerName, prop.specVersion, prop.implementationVersion, prop.description});
         // }
 
@@ -147,6 +152,15 @@ pub fn main() !void {
     );
     defer vk.vkDestroyInstance(vk_instance, null);
 
+    var vk_surface: vk.VkSurfaceKHR = undefined;
+    try vk_raise(VulkanErrors.InitializingError, glfw.glfwCreateWindowSurface(
+        vk_instance,
+        window,
+        null,
+        &vk_surface,
+    ));
+    defer vk.vkDestroySurfaceKHR(vk_instance, vk_surface, null);
+
     std.debug.print("Initialized vulkan, instance={?}\n", .{vk_instance});
 
     try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, null));
@@ -154,31 +168,241 @@ pub fn main() !void {
     defer allocator.free(physical_devices);
     try vk_raise(VulkanErrors.UnknownError, vk.vkEnumeratePhysicalDevices(vk_instance, &free_u32, physical_devices.ptr));
 
-    dbg_print("Found {d} devices:\n", .{physical_devices.len});
+    dbg_print("Found {d} devices\n", .{physical_devices.len});
 
-    free_usize = physical_devices.len;
-    for (physical_devices, 0..) |dev, i| {
-        var props: vk.VkPhysicalDeviceProperties = undefined;
-        var feats: vk.VkPhysicalDeviceFeatures = undefined;
-        vk.vkGetPhysicalDeviceProperties(dev, &props);
-        vk.vkGetPhysicalDeviceFeatures(dev, &feats);
-        if (props.deviceType==vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) free_usize=i;
+    const needed_device_extensions = [_][*:0]const u8{
+        vk.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    };
 
-        dbg_print("    {d}. Name = {s} (Integrated={})\n", .{i+1,
-            props.deviceName,
-            props.deviceType==vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
-        });
-        // dbg_print("{}\n", .{feats});
-    }
-    const req_device = physical_devices[free_usize];
+    const req_device_idx = v:{
+        var req_idx: usize = physical_devices.len;
 
-    vk.vkGetPhysicalDeviceQueueFamilyProperties(req_device, &free_u32, null);
-    const slice = try allocator.alloc(vk.VkQueueFamilyProperties, free_u32);
-    defer allocator.free(slice);
-    vk.vkGetPhysicalDeviceQueueFamilyProperties(req_device, &free_u32, slice.ptr);
-    free_usize = slice.len;
-    for (slice, 0..) |s, i| if (s.queueFlags&vk.VK_QUEUE_GRAPHICS_BIT==vk.VK_QUEUE_GRAPHICS_BIT) {free_usize=i;};
+        for (physical_devices, 0..) |dev, i| {
+            var usable = true;
+            defer if (usable) {
+                req_idx = i;
+            };
 
+            var props: vk.VkPhysicalDeviceProperties = undefined;
+            var feats: vk.VkPhysicalDeviceFeatures = undefined;
+            vk.vkGetPhysicalDeviceProperties(dev, &props);
+            vk.vkGetPhysicalDeviceFeatures(dev, &feats);
+            if (props.deviceType!=vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+                dbg_print("{d} is not an iGPU\n", .{i});
+                usable=false;
+            }
+
+            // dbg_print("    {d}. Name = {s} (Integrated={})\n", .{i+1,
+            //     props.deviceName,
+            //     props.deviceType==vk.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
+            // });
+            // dbg_print("{}\n", .{feats});
+
+            var queue_family_count: u32 = undefined;
+            vk.vkGetPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, null);
+            const queue_families = try allocator.alloc(vk.VkQueueFamilyProperties, queue_family_count);
+            defer allocator.free(queue_families);
+            vk.vkGetPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, queue_families.ptr);
+            // for (queue_families, 0..) |qf, j| {
+            //     dbg_print("\t\t{d}. QueueFamily: Flags={x} Count={d} TimestampValidBits={d} VK_QUEUE_GRAPHICS_BIT={}\n", 
+            //     .{j+1,
+            //         qf.queueFlags,
+            //         qf.queueCount,
+            //         qf.timestampValidBits,
+            //         qf.queueFlags&vk.VK_QUEUE_GRAPHICS_BIT!=0
+            //     });
+            // }
+
+            var extensions_count: u32 = undefined;
+            try vk_raise(VulkanErrors.UnknownError, 
+                vk.vkEnumerateDeviceExtensionProperties(dev, null, &extensions_count, null));
+
+            const extensions = try allocator.alloc(vk.VkExtensionProperties, extensions_count);
+            defer allocator.free(extensions);
+            try vk_raise(VulkanErrors.UnknownError, 
+                vk.vkEnumerateDeviceExtensionProperties(dev, null, &extensions_count, extensions.ptr));
+
+            for (needed_device_extensions) |need_ext| {
+                var found = false;
+                for (extensions) |ext| {
+                    if (c_std.strcmp(need_ext, &ext.extensionName) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    usable = false;
+                    dbg_print("{d} is missing device extension: {s}\n", .{i, need_ext});
+                }
+            }
+
+            // query swapchain support details
+            const needed_format: vk.VkSurfaceFormatKHR = .{
+                .format = vk.VK_FORMAT_B8G8R8A8_SRGB,
+                .colorSpace = vk.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+            };
+            const needed_present_mode: vk.VkPresentModeKHR = vk.VK_PRESENT_MODE_FIFO_KHR;
+            {
+                var capabilities: vk.VkSurfaceCapabilitiesKHR = undefined;
+                try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                    physical_devices[i],
+                    vk_surface,
+                    &capabilities,
+                ));
+
+                var foramt_count: u32 = undefined;
+                try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    physical_devices[i],
+                    vk_surface,
+                    &foramt_count,
+                    null,
+                ));
+                const formats = try allocator.alloc(vk.VkSurfaceFormatKHR, foramt_count);
+                defer allocator.free(formats);
+                try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    physical_devices[i],
+                    vk_surface,
+                    &foramt_count,
+                    formats.ptr,
+                ));
+
+                var present_mode_count: u32 = undefined;
+                try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    physical_devices[i],
+                    vk_surface,
+                    &present_mode_count,
+                    null,
+                ));
+                const present_modes = try allocator.alloc(vk.VkPresentModeKHR, present_mode_count);
+                defer allocator.free(present_modes);
+                try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    physical_devices[i],
+                    vk_surface,
+                    &present_mode_count,
+                    present_modes.ptr,
+                ));
+
+                // dbg_print("present modes = {any} formats = {any}\n", .{present_modes, formats});
+                var format_found = false;
+                for (formats) |fmt| {
+                    if (fmt.format == needed_format.format and fmt.colorSpace == needed_format.colorSpace) {
+                        format_found = true;
+                        break;
+                    }
+                }
+                if (!format_found) {
+                    usable = false;
+                    dbg_print("{d} does not have needed surface format.\n", .{i});
+                }
+
+                var present_mode_found = false;
+                for (present_modes) |pm| {
+                    if (pm == needed_present_mode) {
+                        present_mode_found = true;
+                        break;
+                    }
+                }
+                if (!present_mode_found) {
+                    usable = false;
+                    dbg_print("{d} does not have needed present mode.\n", .{i});
+                }
+            }
+        
+        }
+        
+        break :v try if (req_idx!=physical_devices.len) req_idx else VulkanErrors.InitializingError;
+    };
+    dbg_print("Selected device index = {d}.\n", .{req_device_idx});
+
+    const queue_families = val:{
+        var queue_family_count: u32 = undefined;
+        vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[req_device_idx], &queue_family_count, null);
+        const queue_families = try allocator.alloc(vk.VkQueueFamilyProperties, queue_family_count);
+        vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_devices[req_device_idx], &queue_family_count, queue_families.ptr);
+        break :val queue_families;
+    };
+    defer allocator.free(queue_families); 
+
+    const graphics_family_index = v: {
+        var gfx_idx: u32 = 0;
+        for (queue_families, 0..) |qf, i| {
+            if (qf.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT != 0) {
+                gfx_idx = @intCast(i);
+                break;
+            }
+        }
+        break :v gfx_idx;
+    };
+
+    const presentation_family_index = v:{
+        var pres_idx: ?u32 = null;
+        for (queue_families, 0..) |_, i| {
+            var present_support: vk.VkBool32 = 0;
+            try vk_raise_uknown(vk.vkGetPhysicalDeviceSurfaceSupportKHR(
+                physical_devices[req_device_idx],
+                @intCast(i),
+                vk_surface,
+                &present_support,
+            ));
+            if (present_support != 0) {
+                pres_idx = @intCast(i);
+                break;
+            }
+        }
+        break :v try (pres_idx orelse VulkanErrors.NoPresentationSupport);
+    };
+
+    const vk_device: vk.VkDevice = v:{
+        var dev: vk.VkDevice = undefined;
+        const queues: []const vk.VkDeviceQueueCreateInfo = if (graphics_family_index != presentation_family_index) 
+        &[2]vk.VkDeviceQueueCreateInfo{
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = graphics_family_index,
+                .queueCount = 1,
+                .pQueuePriorities = &@floatCast(1.0),
+            },
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = presentation_family_index,
+                .queueCount = 1,
+                .pQueuePriorities = &@floatCast(1.0),
+            }
+        } else &[1]vk.VkDeviceQueueCreateInfo{
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = graphics_family_index,
+                .queueCount = 1,
+                .pQueuePriorities = &@floatCast(1.0),
+            }
+        };
+
+        try vk_raise(VulkanErrors.InitializingError, vk.vkCreateDevice(
+            physical_devices[req_device_idx],
+            &vk.VkDeviceCreateInfo{
+                .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                .pQueueCreateInfos = queues.ptr,
+                .queueCreateInfoCount = @intCast(queues.len),
+                .enabledExtensionCount = needed_device_extensions.len,
+                .ppEnabledExtensionNames = &needed_device_extensions,
+                .enabledLayerCount = validation_layers.len,     // cannot verify if this works
+                .ppEnabledLayerNames  = &validation_layers,     // latest implementations ignore these 2
+                .pEnabledFeatures = null,
+            },
+            null,
+            &dev,
+        ));
+        break :v dev;
+    };
+    defer vk.vkDestroyDevice(vk_device, null);
+    
+    var graphics_queue: vk.VkQueue = undefined;
+    vk.vkGetDeviceQueue(vk_device, graphics_family_index, 0, &graphics_queue);
+
+    var presentation_queue: vk.VkQueue = undefined;
+    vk.vkGetDeviceQueue(vk_device, presentation_family_index, 0, &presentation_queue);
+
+    dbg_print("Created logical device and initialized queues.\n", .{});
 
     while (glfw.glfwWindowShouldClose(window) == 0) : ({
         glfw.glfwPollEvents();
@@ -197,6 +421,7 @@ const VulkanErrors = error {
     InitializingError,
     ExtensionNamesError,
     NoValidationSupport,
+    NoPresentationSupport,
 };
 
 const GLFWErrors = error {
@@ -214,6 +439,10 @@ fn vk_raise(comptime err_type: VulkanErrors, expr_result:vk.VkResult) VulkanErro
             break :brk err_type;
         },
     };
+}
+
+fn vk_raise_uknown(expr_result:vk.VkResult) VulkanErrors!void {
+    return vk_raise(VulkanErrors.UnknownError, expr_result);
 }
 
 fn glfw_raise(comptime err_type: GLFWErrors, expr_result:c_int) GLFWErrors!void {
