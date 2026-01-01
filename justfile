@@ -1,7 +1,5 @@
-export ZIG_LOCAL_CACHE_DIR := "./.cache/"
-
-zig:
-    zig run -lc -lglfw -lvulkan main.zig 2>&1
+zig args="":
+    zig run -lc -lglfw -lvulkan src/main.zig {{args}}
 
 cpp:
     zig c++ vulkan-tutorial.cpp -lglfw -lvulkan -o cpp.out
@@ -13,7 +11,5 @@ build:
     zig c++ vulkan-tutorial.cpp -lglfw -lvulkan -Oz -o cpp.out
     eza -l zig.out cpp.out
 
-clean zig_cache_dir="":
+clean:
     rm -f cpp.out zig.out
-    # why was i cleaning this menacingly?
-    [ -z {{zig_cache_dir}} ] || rm -rf {{ZIG_LOCAL_CACHE_DIR}}
