@@ -4,9 +4,7 @@ pub const c_std = @cImport({
 });
 const Init = @import("Init.zig");
 pub const c = @cImport({
-    @cInclude("vulkan/vulkan.h");
-    // @cDefine("GLFW_INCLUDE_VULKAN", {});
-    // @cInclude("GLFW/glfw3.h");
+    @cInclude("c.h");
 });
 
 
@@ -21,21 +19,20 @@ const WIDTH = 800;
 const HEIGHT = 600;
 
 pub fn main() !void {
-    defer {
-        if (!allocator_init.detectLeaks())
-            dbg_print("No memory leaks found.\n", .{});
-    }
+    var init = Init{};
 
-    var initializing_struct = Init{};
+    try init.create_instance();
+    defer c.vkDestroyInstance(init.vk_instance, null);
 
-    try initializing_struct.create_instance();
-    defer c.vkDestroyInstance(initializing_struct.vk_instance, null);
+    try init.get_appropriate_physical_device();
+    // defer allocator.free(init.physical_devices);
 
-    try initializing_struct.get_appropriate_physical_device();
-    defer allocator.free(initializing_struct.physical_devices);
+    try init.create_device();
+    defer c.vkDestroyDevice(init.vk_device, null);
 
-    try initializing_struct.create_device();
-    defer c.vkDestroyDevice(initializing_struct.vk_device, null);
+    try init.create_buffer();
+    defer c.vmaDestroyAllocator(init.vma_allocator);
+    defer c.vmaDestroyBuffer(init.vma_allocator, init.buffer, init.buffer_allocation);
 
     // const queue_families = try get_slice(c.vkGetPhysicalDeviceQueueFamilyProperties, c.VkQueueFamilyProperties, 
     //     .{initializing_struct.physical_devices[initializing_struct.req_device_idx]});
@@ -128,8 +125,9 @@ pub fn main() !void {
     //     break;  //FIXME: change
     // }
 
-
     std.debug.print("Done.\n", .{});
+    if (!allocator_init.detectLeaks()) {dbg_print("No memory leaks found.\n", .{});}
+    else {return error.LeaksFound;}
 }
 
 /// the return type for get_slice(), comptime

@@ -13,11 +13,18 @@ const get_slice = main.get_slice;
 const get_slice_v1 = main.get_slice_v1;
 const c = main.c;
 
+// MARK: Fields
+
 vk_instance: c.VkInstance = undefined,
 vk_device: c.VkDevice = undefined,
 vk_device_queue_family_index: usize = undefined,
 physical_devices: []c.VkPhysicalDevice = &.{},
 req_device_idx: usize = undefined,
+vma_allocator: c.VmaAllocator = undefined,
+buffer: c.VkBuffer = undefined,
+buffer_allocation: c.VmaAllocation = undefined,
+
+pub const VK_VERSION = c.VK_API_VERSION_1_0;
 
 fn supported_extensions() void {
     // std.debug.print("Vulkan extensions supported (count) = {}\n", .{
@@ -40,14 +47,14 @@ pub fn create_instance(self: *Self) !void {
     };
 
     try vk_raise(c.vkCreateInstance(
-        // TODO: zero initialize properly
-        &std.mem.zeroInit(c.VkInstanceCreateInfo, c.VkInstanceCreateInfo{
+        // zero initialized properly, by @cImport
+        &c.VkInstanceCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pApplicationInfo = &c.VkApplicationInfo{
                 .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
                 .applicationVersion = c.VK_MAKE_API_VERSION(1, 0, 0, 0),
                 .engineVersion = c.VK_MAKE_API_VERSION(1, 0, 0, 0),
-                .apiVersion = c.VK_API_VERSION_1_0,
+                .apiVersion = VK_VERSION,
                 .pApplicationName = "idk",
                 .pEngineName = "never used",
                 // .pNext = null,
@@ -57,7 +64,7 @@ pub fn create_instance(self: *Self) !void {
             .enabledLayerCount = validation_layers.len,
             .ppEnabledLayerNames = &validation_layers,
             .pNext =
-        &std.mem.zeroInit(c.VkDebugUtilsMessengerCreateInfoEXT, c.VkDebugUtilsMessengerCreateInfoEXT{
+        &c.VkDebugUtilsMessengerCreateInfoEXT{
             .sType = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
             .messageSeverity =
                 // c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -91,8 +98,8 @@ pub fn create_instance(self: *Self) !void {
                     return 0;
                 }
             }.callback,
-        }),
-        }),
+        },
+        },
         // Allocator, and VkInstance
         null, &self.vk_instance));	
 }
@@ -186,4 +193,29 @@ pub fn create_device(self: *Self) !void {
 	);	
 
     self.vk_device_queue_family_index = needed_queue_idx;
+}
+
+pub fn create_buffer(self: *Self) !void {
+   try vk_raise(c.vmaCreateAllocator(&c.VmaAllocatorCreateInfo{
+        .physicalDevice = self.physical_devices[self.req_device_idx],
+        .device = self.vk_device,
+        .instance = self.vk_instance,
+        .vulkanApiVersion = VK_VERSION,
+    }, &self.vma_allocator));
+
+    try vk_raise(c.vmaCreateBuffer(self.vma_allocator, 
+        &c.VkBufferCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 1024,
+            .usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        }, 
+        &c.VmaAllocationCreateInfo{
+            .usage = c.VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+            .flags = c.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+        }, 
+    &self.buffer, &self.buffer_allocation, null));
+
+    // TODO: read+write buffer from CPU
+
+    
 }
