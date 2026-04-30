@@ -1,6 +1,9 @@
 const std = @import("std");
 pub const c_std = @cImport({
     @cInclude("string.h");
+    @cInclude("errno.h");
+    @cInclude("sys/resource.h");
+    @cInclude("stdio.h");
 });
 const Init = @import("Init.zig");
 pub const c = @cImport({
@@ -14,120 +17,147 @@ var allocator_init = std.heap.DebugAllocator(.{
     // .verbose_log = true,
 }).init;
 pub const allocator = allocator_init.allocator();
+pub var stdout: std.Io.Writer = undefined;
+pub var stdin: std.Io.Reader = undefined;
 
-const WIDTH = 800;
-const HEIGHT = 600;
+pub const WIDTH = 1000;
+pub const HEIGHT = 1000;
 
 pub fn main() !void {
+
+    var stdbuf: [1024*10]u8 = undefined;
+	var stdout_writer = std.fs.File.stdout().writer(&stdbuf);
+	try stdout_writer.file.lock(.exclusive);
+	defer stdout_writer.file.unlock();
+    stdout = stdout_writer.interface;
+
+    var stdinbuf: [1024*10]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdinbuf);
+    try stdin_reader.file.lock(.exclusive);
+    defer stdin_reader.file.unlock();
+    stdin = stdin_reader.interface;
+
+    try test_print();
+
     var init = Init{};
 
+    const init_usage = get_usage();
+    dbg_print("Initial usage: {d}\n", .{init_usage});
+{
     try init.create_instance();
     defer c.vkDestroyInstance(init.vk_instance, null);
 
     try init.get_appropriate_physical_device();
-    // defer allocator.free(init.physical_devices);
+    defer allocator.free(init.physical_devices);
 
     try init.create_device();
     defer c.vkDestroyDevice(init.vk_device, null);
 
     try init.create_buffer();
     defer c.vmaDestroyAllocator(init.vma_allocator);
-    defer c.vmaDestroyBuffer(init.vma_allocator, init.buffer, init.buffer_allocation);
+    // defer c.vmaDestroyBuffer(init.vma_allocator, init.buffer, init.buffer_allocation);
 
-    // const queue_families = try get_slice(c.vkGetPhysicalDeviceQueueFamilyProperties, c.VkQueueFamilyProperties, 
-    //     .{initializing_struct.physical_devices[initializing_struct.req_device_idx]});
-    // defer allocator.free(queue_families); 
+    // note: command_pool should be synchronised
+    var command_pool: c.VkCommandPool = undefined;
+    try vk_raise(c.vkCreateCommandPool(init.vk_device, &c.VkCommandPoolCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+    }, null, &command_pool));
+    defer c.vkDestroyCommandPool(init.vk_device, command_pool, null);
 
-    // const graphics_family_index = v: {
-    //     var gfx_idx: u32 = 0;
-    //     for (queue_families, 0..) |qf, i| {
-    //         if (qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0) {
-    //             gfx_idx = @intCast(i);
-    //             break;
-    //         }
-    //     }
-    //     break :v gfx_idx;
-    // };
+    // note: also be synchronised
+    var prim_command_buffer: c.VkCommandBuffer = undefined;
+    try vk_raise(c.vkAllocateCommandBuffers(init.vk_device, &c.VkCommandBufferAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = command_pool,
+        .commandBufferCount = 1,
+        .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+    }, &prim_command_buffer));
+    defer c.vkFreeCommandBuffers(init.vk_device, command_pool, 1, &prim_command_buffer);
 
-    // const presentation_family_index = v:{
-    //     var pres_idx: ?u32 = null;
-    //     for (queue_families, 0..) |_, i| {
-    //         var present_support: c.VkBool32 = 0;
-    //         try vk_raise_uknown(c.vkGetPhysicalDeviceSurfaceSupportKHR(
-    //             physical_devices[req_device_idx],
-    //             @intCast(i),
-    //             vk_surface,
-    //             &present_support,
-    //         ));
-    //         if (present_support != 0) {
-    //             pres_idx = @intCast(i);
-    //             break;
-    //         }
-    //     }
-    //     break :v try (pres_idx orelse VulkanErrors.NoPresentationSupport);
-    // };
+    var image: c.VkImage = undefined;
+    var allocation: c.VmaAllocation = undefined;
 
-    // // const vk_device: c.VkDevice = v:{
-    // //     var dev: c.VkDevice = undefined;
-    // //     const queues: []const c.VkDeviceQueueCreateInfo = if (graphics_family_index != presentation_family_index) 
-    // //     &[2]c.VkDeviceQueueCreateInfo{
-    // //         .{
-    // //             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-    // //             .queueFamilyIndex = graphics_family_index,
-    // //             .queueCount = 1,
-    // //             .pQueuePriorities = &@floatCast(1.0),
-    // //         },
-    // //         .{
-    // //             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-    // //             .queueFamilyIndex = presentation_family_index,
-    // //             .queueCount = 1,
-    // //             .pQueuePriorities = &@floatCast(1.0),
-    // //         }
-    // //     } else &[1]c.VkDeviceQueueCreateInfo{
-    // //         .{
-    // //             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-    // //             .queueFamilyIndex = graphics_family_index,
-    // //             .queueCount = 1,
-    // //             .pQueuePriorities = &@floatCast(1.0),
-    // //         }
-    // //     };
-
-    // //     try vk_raise(VulkanErrors.InitializingError, c.vkCreateDevice(
-    // //         physical_devices[req_device_idx],
-    // //         &c.VkDeviceCreateInfo{
-    // //             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-    // //             .pQueueCreateInfos = queues.ptr,
-    // //             .queueCreateInfoCount = @intCast(queues.len),
-    // //             .enabledExtensionCount = needed_device_extensions.len,
-    // //             .ppEnabledExtensionNames = &needed_device_extensions,
-    // //             .enabledLayerCount = validation_layers.len,     // cannot verify if this works
-    // //             .ppEnabledLayerNames  = &validation_layers,     // latest implementations ignore these 2
-    // //             .pEnabledFeatures = null,
-    // //         },
-    // //         null,
-    // //         &dev,
-    // //     ));
-    // //     break :v dev;
-    // // };
-    // // defer c.vkDestroyDevice(vk_device, null);
+    dbg_print("before_creating: {d}\n", .{get_usage()-init_usage});
+    try vk_raise(c.vmaCreateImage(init.vma_allocator, 
+        &c.VkImageCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .format = c.VK_FORMAT_R8G8B8A8_UINT,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .extent = c.VkExtent3D{
+                .width = WIDTH,
+                .height = HEIGHT,
+                .depth = 1,
+            },
+            .usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = c.VK_SAMPLE_COUNT_1_BIT,
+        }, 
+        &c.VmaAllocationCreateInfo{.usage = c.VMA_MEMORY_USAGE_AUTO}, 
+        &image, &allocation, null));
+    dbg_print("after creating: {d}\n", .{get_usage()-init_usage});
     
-    // var graphics_queue: c.VkQueue = undefined;
-    // c.vkGetDeviceQueue(vk_device, graphics_family_index, 0, &graphics_queue);
+    c.vmaDestroyImage(init.vma_allocator, image, allocation);
+    dbg_print("after destroying image: {d}\n", .{get_usage()-init_usage});
+}
+    dbg_print("after destroying all: {d}\n", .{get_usage()-init_usage});
 
-    // var presentation_queue: c.VkQueue = undefined;
-    // c.vkGetDeviceQueue(vk_device, presentation_family_index, 0, &presentation_queue);
-
-    // dbg_print("Created logical device and initialized queues.\n", .{});
-
-    // while (glfw.glfwWindowShouldClose(window) == 0) : ({
-    //     glfw.glfwPollEvents();
-    // }) {
-    //     break;  //FIXME: change
-    // }
-
+    // stdin.discardAll(1);
+    // dbg_print("discarded: {}\n", .{try stdin.discardRemaining()});
     std.debug.print("Done.\n", .{});
     if (!allocator_init.detectLeaks()) {dbg_print("No memory leaks found.\n", .{});}
     else {return error.LeaksFound;}
+}
+
+fn test_print() !void {
+    const red_rgba: [WIDTH*HEIGHT*4]u8 = .{0xFF, 0x00, 0x00, 0xFF} ** (WIDTH * HEIGHT);
+    const green_rgba: [WIDTH*HEIGHT*4]u8 = .{0x00, 0xFF, 0x00, 0xFF} ** (WIDTH * HEIGHT);
+    const yellow_rgba: [WIDTH*HEIGHT*4]u8 = .{0xFF, 0xFF, 0x00, 0xFF} ** (WIDTH * HEIGHT);
+    try print_color(red_rgba);
+    std.Thread.sleep(1*std.time.ns_per_s);
+    try print_color(yellow_rgba);
+    std.Thread.sleep(1*std.time.ns_per_s);
+    try print_color(green_rgba);
+}
+
+test "print colors" {
+    var buf: [1024*10]u8 = undefined;
+	var stdout_writer = std.fs.File.stdout().writer(&buf);
+	try stdout_writer.file.lock(.exclusive);
+	defer stdout_writer.file.unlock();
+    stdout = stdout_writer.interface;
+
+    try test_print();
+}
+
+pub fn print_color(buffer: [WIDTH * HEIGHT * 4]u8) !void {
+
+	try stdout.print("\x1b[{};{}H", .{2+1, 0+1});
+	try stdout.print("\x1b_Gi=1,q=1,m=1,a=T,f=32,s={d},v={d};\x1b\\", .{WIDTH, HEIGHT});
+
+    var buf_encoded: [WIDTH*HEIGHT*4*2]u8 = undefined;
+	const encoded = std.base64.standard.Encoder.encode(&buf_encoded, &buffer);
+	var chunker = std.mem.window(u8, encoded, 4096, 4096);
+    while (chunker.next()) |chunk| {
+		try stdout.print("\x1b_Gi=1,m=1;", .{});
+		try stdout.writeAll(chunk);
+		try stdout.print("\x1b\\", .{});
+    }
+	try stdout.print("\x1b_Gi=1,m=0;\x1b\\", .{});
+
+
+	try stdout.flush();
+}
+
+fn get_usage() c_long {
+    var usage: c_std.rusage = undefined;
+
+    if (c_std.getrusage(c_std.RUSAGE_SELF, &usage)!=0) {
+        @panic("getrusage failed");   
+    } else {
+        return usage.unnamed_0.ru_maxrss;
+    }
 }
 
 /// the return type for get_slice(), comptime

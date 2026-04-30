@@ -125,7 +125,8 @@ pub fn get_appropriate_physical_device(self: *Self) !void {
         var feats: c.VkPhysicalDeviceFeatures = undefined;
         c.vkGetPhysicalDeviceProperties(dev, &props);
         c.vkGetPhysicalDeviceFeatures(dev, &feats);
-        if (props.deviceType!=c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+        // if (props.deviceType!=c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+        if (props.deviceType!=c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
             dbg_print("rejecting {d}.{s}, is not an iGPU\n", .{i, props.deviceName});
             usable=false;
         }
@@ -203,17 +204,17 @@ pub fn create_buffer(self: *Self) !void {
         .vulkanApiVersion = VK_VERSION,
     }, &self.vma_allocator));
 
-    try vk_raise(c.vmaCreateBuffer(self.vma_allocator, 
-        &c.VkBufferCreateInfo{
-            .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = 1024,
-            .usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        }, 
-        &c.VmaAllocationCreateInfo{
-            .usage = c.VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-            .flags = c.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-        }, 
-    &self.buffer, &self.buffer_allocation, null));
+    // try vk_raise(c.vmaCreateBuffer(self.vma_allocator, 
+    //     &c.VkBufferCreateInfo{
+    //         .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+    //         .size = 1024,
+    //         .usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    //     }, 
+    //     &c.VmaAllocationCreateInfo{
+    //         .usage = c.VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+    //         .flags = c.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+    //     }, 
+    // &self.buffer, &self.buffer_allocation, null));
 
     // TODO: read+write buffer from CPU
 

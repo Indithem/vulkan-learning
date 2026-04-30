@@ -80,6 +80,8 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
     b.getInstallStep().dependOn(&run_cmd.step);
 
+    // b.installArtifact(exe);
+
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {

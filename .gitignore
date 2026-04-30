@@ -2,6 +2,7 @@
 .zed/
 zig-out/
 .cache/
+zig-pkg/
 
 a.out
 cpp.out
